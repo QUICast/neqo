@@ -1,0 +1,52 @@
+# Experimental MCQUIC Transport Support
+
+This crate has an off-by-default `mcquic` feature for experimental
+draft-jholland-quic-multicast-08 style QUIC multicast support.
+
+This is a transport extension. It is not WebTransport, not MoQT, not QVF1, and
+not a media pipeline. It must not be exposed to ordinary web content by default.
+
+The unicast QUIC connection negotiates multicast capability, carries MCQUIC
+control frames, and authenticates multicast channel packets in connection
+context. Neqo does not join multicast sockets itself. A future Gecko/Necko
+integration should own socket joins, receive UDP multicast packets, and pass
+channel packet bytes and metadata into Neqo.
+
+MCQUIC packet numbers are transport telemetry and control state. Application
+protocols must not treat them as media identity. A higher layer such as MoQT
+needs its own object identity and continuity model.
+
+Current first-slice support includes:
+
+- client and server multicast transport parameter codecs
+- multicast control frame codecs
+- connection-level control-frame send and receive queues
+- sender-direction and negotiation checks for control frames
+- ACK range tracking
+- NSS-backed multicast packet header protection and AEAD encode/decode
+- receive-side primitives for keys, integrity state, protected channel packet
+  buffering, integrity validation, and release of validated channel DATAGRAM
+  frames
+- an `examples/mcquic_hex.rs` helper for comparing wire encodings against other
+  QUICast implementations
+- a `scripts/mcquic_interop_vectors.sh` helper that diffs those encodings
+  against the adjacent local quiche fork
+- a `scripts/mcquic_mcrx_fire.sh` helper for live socket interop: quiche
+  encodes one protected multicast channel packet, `mctx-core` sends it,
+  `mcrx-core` receives it, and Neqo validates and releases the DATAGRAM
+
+Neqo still does not own multicast sockets. The fire-test helper is intentionally
+outside the crate dependency graph so Gecko/Necko can remain the future owner of
+socket joins and packet delivery.
+
+The fire-test helper uses separate sender and receiver processes so the quiche
+sender and Neqo receiver do not link their crypto stacks into one binary. A
+local loopback smoke test can be run with:
+
+```sh
+MCQUIC_SOURCE=127.0.0.1 MCQUIC_INTERFACE=127.0.0.1 MCQUIC_GROUP=232.1.1.1 \
+  neqo-transport/scripts/mcquic_mcrx_fire.sh
+```
+
+For real interface testing, set `MCQUIC_SOURCE` and `MCQUIC_INTERFACE` to the
+source and local interface addresses that the OS accepts for the SSM join.
