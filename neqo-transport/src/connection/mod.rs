@@ -2366,8 +2366,14 @@ impl Connection {
             return false;
         };
         match self.role {
-            Role::Client => remote.get_mcquic_server_support(),
-            Role::Server => remote.get_mcquic_client_params().is_some(),
+            Role::Client => {
+                tph.local().get_mcquic_client_params().is_some()
+                    && remote.get_mcquic_server_support()
+            }
+            Role::Server => {
+                tph.local().get_mcquic_server_support()
+                    && remote.get_mcquic_client_params().is_some()
+            }
         }
     }
 

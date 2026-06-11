@@ -61,17 +61,15 @@ This creates a temporary Rust harness that:
   3. receives multicast with mcrx-core,
   4. feeds the received bytes into Neqo MCQUIC channel validation.
 
-Required for live runs:
-  MCQUIC_SOURCE       local source IP used for SSM and sender bind
-
 Optional:
+  MCQUIC_SOURCE       local source IP used for SSM (default: 127.0.0.1)
   MCQUIC_INTERFACE    local multicast interface IP (defaults to MCQUIC_SOURCE)
   MCQUIC_GROUP        multicast group (default: 232.1.1.1)
   MCQUIC_PORT         UDP port (default: 5004)
   MCQUIC_PAYLOAD      DATAGRAM payload text (default: neqo-mcquic-fire)
   MCQUIC_TIMEOUT_MS   receive timeout (default: 3000)
   MCQUIC_TTL          multicast TTL/hop-limit (default: 1)
-  MCQUIC_BIND_SOURCE  bind sender to MCQUIC_SOURCE (default: 1)
+  MCQUIC_BIND_SOURCE  bind sender to MCQUIC_SOURCE (default: 0)
   MCQUIC_BUILD_ONLY   set to 1 to only compile the temporary harness
   MCQUIC_CARGO_OFFLINE set to 1 to force Cargo offline mode (default: 0)
   MCQUIC_TARGET_DIR   Cargo target dir for the temp harness
@@ -81,6 +79,9 @@ Optional:
   QUICHE_CRATE        local quiche crate path
 
 Example:
+  neqo-transport/scripts/mcquic_mcrx_fire.sh
+
+Real interface example:
   MCQUIC_SOURCE=192.0.2.10 MCQUIC_INTERFACE=192.0.2.10 \
     neqo-transport/scripts/mcquic_mcrx_fire.sh
 USAGE
@@ -136,7 +137,7 @@ use mctx_core::{OutgoingInterface, Publication, PublicationConfig, PublicationId
 use quiche::multicast as quiche_mc;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let source = required_ip("MCQUIC_SOURCE")?;
+    let source = source_ip()?;
     let interface = optional_ip("MCQUIC_INTERFACE")?.unwrap_or(source);
     let group = optional_ip("MCQUIC_GROUP")?
         .unwrap_or_else(|| "232.1.1.1".parse().expect("default group parses"));
@@ -198,7 +199,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .with_outgoing_interface(outgoing_interface(interface))
         .with_ttl(ttl)
         .with_loopback(true);
-    if env::var("MCQUIC_BIND_SOURCE").map_or(true, |value| value != "0") {
+    if env::var("MCQUIC_BIND_SOURCE").is_ok_and(|value| value != "0") {
         publication_config = publication_config.with_source_addr(source);
     }
     let publication = Publication::new(PublicationId(1), publication_config)?;
@@ -214,11 +215,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn required_ip(name: &str) -> Result<IpAddr, Box<dyn Error>> {
-    env::var(name)
-        .map_err(|_| format!("{name} is required for live SSM fire testing"))?
+fn source_ip() -> Result<IpAddr, Box<dyn Error>> {
+    env::var("MCQUIC_SOURCE")
+        .unwrap_or_else(|_| "127.0.0.1".into())
         .parse()
-        .map_err(|err| format!("{name} is not an IP address: {err}").into())
+        .map_err(|err| format!("MCQUIC_SOURCE is not an IP address: {err}").into())
 }
 
 fn optional_ip(name: &str) -> Result<Option<IpAddr>, Box<dyn Error>> {
@@ -294,7 +295,7 @@ use neqo_transport::mcquic as neqo_mc;
 fn main() -> Result<(), Box<dyn Error>> {
     nss::init()?;
 
-    let source = required_ip("MCQUIC_SOURCE")?;
+    let source = source_ip()?;
     let interface = optional_ip("MCQUIC_INTERFACE")?.unwrap_or(source);
     let group = optional_ip("MCQUIC_GROUP")?
         .unwrap_or_else(|| "232.1.1.1".parse().expect("default group parses"));
@@ -412,11 +413,11 @@ fn wait_integrity(path: &str, timeout: Duration) -> Result<(u64, u64, Vec<u8>), 
     }
 }
 
-fn required_ip(name: &str) -> Result<IpAddr, Box<dyn Error>> {
-    env::var(name)
-        .map_err(|_| format!("{name} is required for live SSM fire testing"))?
+fn source_ip() -> Result<IpAddr, Box<dyn Error>> {
+    env::var("MCQUIC_SOURCE")
+        .unwrap_or_else(|_| "127.0.0.1".into())
         .parse()
-        .map_err(|err| format!("{name} is not an IP address: {err}").into())
+        .map_err(|err| format!("MCQUIC_SOURCE is not an IP address: {err}").into())
 }
 
 fn optional_ip(name: &str) -> Result<Option<IpAddr>, Box<dyn Error>> {

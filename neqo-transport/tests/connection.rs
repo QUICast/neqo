@@ -69,6 +69,25 @@ mod mcquic_tests {
         (client, server, params)
     }
 
+    fn connected_with_params(
+        client_params: Option<ClientTransportParams>,
+        server_support: bool,
+    ) -> (Connection, Connection) {
+        let mut client = new_client::<CountingConnectionIdGenerator>(
+            ConnectionParameters::default().mcquic_client_params(client_params),
+        );
+        let mut server = new_server::<CountingConnectionIdGenerator, &str>(
+            DEFAULT_ALPN,
+            ConnectionParameters::default().mcquic_server_support(server_support),
+        );
+
+        test_fixture::handshake(&mut client, &mut server);
+        assert_eq!(*client.state(), State::Confirmed);
+        assert_eq!(*server.state(), State::Confirmed);
+
+        (client, server)
+    }
+
     fn channel_id() -> Vec<u8> {
         b"demo-channel".to_vec()
     }
@@ -223,6 +242,33 @@ mod mcquic_tests {
         assert_eq!(
             server.mcquic_send(limits_frame()),
             Err(Error::ProtocolViolation)
+        );
+    }
+
+    #[test]
+    fn client_does_not_negotiate_without_local_params() {
+        let (mut client, mut server) = connected_with_params(None, true);
+
+        assert!(client.peer_mcquic_server_support());
+        assert_eq!(server.peer_mcquic_client_params(), None);
+        assert_eq!(client.mcquic_send(limits_frame()), Err(Error::NotAvailable));
+        assert_eq!(
+            server.mcquic_send(announce_frame()),
+            Err(Error::NotAvailable)
+        );
+    }
+
+    #[test]
+    fn server_does_not_negotiate_without_local_support() {
+        let params = client_params();
+        let (mut client, mut server) = connected_with_params(Some(params.clone()), false);
+
+        assert!(!client.peer_mcquic_server_support());
+        assert_eq!(server.peer_mcquic_client_params(), Some(params));
+        assert_eq!(client.mcquic_send(limits_frame()), Err(Error::NotAvailable));
+        assert_eq!(
+            server.mcquic_send(announce_frame()),
+            Err(Error::NotAvailable)
         );
     }
 }

@@ -35,6 +35,21 @@ Current first-slice support includes:
   encodes one protected multicast channel packet, `mctx-core` sends it,
   `mcrx-core` receives it, and Neqo validates and releases the DATAGRAM
 
+Review-facing Neqo API surface:
+
+- configure client capability with
+  `ConnectionParameters::mcquic_client_params(Some(...))`
+- configure server advertisement with
+  `ConnectionParameters::mcquic_server_support(true)`
+- inspect negotiated peer transport parameters with
+  `Connection::peer_mcquic_server_support()` and
+  `Connection::peer_mcquic_client_params()`
+- queue and receive unicast MCQUIC control frames with
+  `Connection::mcquic_send()`, `Connection::mcquic_readable()`, and
+  `Connection::mcquic_recv()`
+- validate caller-supplied multicast UDP payloads with `ChannelReceiveState`
+  and release validated `ChannelDatagram` values
+
 Neqo still does not own multicast sockets. The fire-test helper is intentionally
 outside the crate dependency graph so Gecko/Necko can remain the future owner of
 socket joins and packet delivery.
@@ -44,9 +59,12 @@ sender and Neqo receiver do not link their crypto stacks into one binary. A
 local loopback smoke test can be run with:
 
 ```sh
-MCQUIC_SOURCE=127.0.0.1 MCQUIC_INTERFACE=127.0.0.1 MCQUIC_GROUP=232.1.1.1 \
-  neqo-transport/scripts/mcquic_mcrx_fire.sh
+neqo-transport/scripts/mcquic_mcrx_fire.sh
 ```
 
 For real interface testing, set `MCQUIC_SOURCE` and `MCQUIC_INTERFACE` to the
 source and local interface addresses that the OS accepts for the SSM join.
+On macOS, leaving `MCQUIC_BIND_SOURCE` at its default of `0` avoids a multicast
+send `BrokenPipe` seen when the sender socket is also bound to the source
+address. Set `MCQUIC_BIND_SOURCE=1` only on platforms or networks that need an
+explicit sender bind.
