@@ -42,6 +42,11 @@ pub struct RecvStreams {
 }
 
 impl RecvStreams {
+    #[cfg(test)]
+    pub(crate) fn stream_count(&self) -> usize {
+        self.streams.len()
+    }
+
     pub fn write_frames<B: Buffer>(
         &mut self,
         builder: &mut packet::Builder<B>,

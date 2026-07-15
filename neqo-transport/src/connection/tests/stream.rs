@@ -536,6 +536,168 @@ impl crate::connection::test_internal::FrameWriter for Writer {
     }
 }
 
+struct StreamWriter {
+    stream_id: StreamId,
+    data: Vec<u8>,
+}
+
+impl crate::connection::test_internal::FrameWriter for StreamWriter {
+    fn write_frames(&mut self, builder: &mut packet::Builder<&mut Vec<u8>>) {
+        builder.encode_varint(u64::from(FrameType::Stream) | 0x02);
+        builder.encode_varint(self.stream_id.as_u64());
+        builder.encode_varint(u64::try_from(self.data.len()).expect("length fits in u64"));
+        builder.encode(&self.data);
+    }
+}
+
+#[test]
+fn high_remote_uni_stream_remains_dense_without_mcquic() {
+    const HIGH_STREAM_ORDINAL: u64 = 31;
+    let high_stream_id = StreamId::new(HIGH_STREAM_ORDINAL * 4 + 3);
+    let mut client = new_client(
+        ConnectionParameters::default().max_streams(StreamType::UniDi, HIGH_STREAM_ORDINAL + 1),
+    );
+    let mut server = default_server();
+    connect(&mut client, &mut server);
+    client.events().for_each(drop);
+
+    let dgram = send_with_extra(
+        &mut server,
+        StreamWriter {
+            stream_id: high_stream_id,
+            data: b"high".to_vec(),
+        },
+        now(),
+    );
+    client.process_input(dgram, now());
+
+    let new_streams = client
+        .events()
+        .filter(|event| matches!(event, ConnectionEvent::NewStream { .. }))
+        .count();
+    assert_eq!(
+        new_streams,
+        usize::try_from(HIGH_STREAM_ORDINAL + 1).unwrap()
+    );
+    assert_eq!(
+        client.streams.recv_stream_count(),
+        usize::try_from(HIGH_STREAM_ORDINAL + 1).unwrap()
+    );
+}
+
+#[cfg(feature = "mcquic")]
+#[test]
+fn high_remote_uni_stream_is_sparse_with_mcquic() {
+    use crate::mcquic::{ClientLimits, ClientTransportParams};
+
+    const HIGH_STREAM_ORDINAL: u64 = 1_000_000;
+    const LOWER_STREAM_ORDINAL: u64 = 500_000;
+    let high_stream_id = StreamId::new(HIGH_STREAM_ORDINAL * 4 + 3);
+    let lower_stream_id = StreamId::new(LOWER_STREAM_ORDINAL * 4 + 3);
+    let mcquic_params = ClientTransportParams {
+        limits: ClientLimits {
+            ipv4_channels_allowed: true,
+            ipv6_channels_allowed: false,
+            max_aggregate_rate_kibps: 100_000,
+            max_channel_ids: 32,
+        },
+        hash_algorithms: vec![1],
+        encryption_algorithms: vec![0x1301],
+    };
+    let mut client = new_client(
+        ConnectionParameters::default()
+            .max_streams(StreamType::UniDi, HIGH_STREAM_ORDINAL + 1)
+            .mcquic_client_params(Some(mcquic_params)),
+    );
+    let mut server = new_server(ConnectionParameters::default().mcquic_server_support(true));
+    connect(&mut client, &mut server);
+    client.events().for_each(drop);
+
+    let dgram = send_with_extra(
+        &mut server,
+        StreamWriter {
+            stream_id: high_stream_id,
+            data: b"high".to_vec(),
+        },
+        now(),
+    );
+    client.process_input(dgram, now());
+
+    let new_streams = client
+        .events()
+        .filter_map(|event| match event {
+            ConnectionEvent::NewStream { stream_id } => Some(stream_id),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(new_streams, vec![StreamId::new(3), high_stream_id]);
+    assert_eq!(client.streams.recv_stream_count(), 2);
+
+    let mut data = [0; 4];
+    assert_eq!(
+        client.stream_recv(high_stream_id, &mut data),
+        Ok((4, false))
+    );
+    assert_eq!(&data, b"high");
+
+    let dgram = send_with_extra(
+        &mut server,
+        StreamWriter {
+            stream_id: lower_stream_id,
+            data: b"late".to_vec(),
+        },
+        now(),
+    );
+    client.process_input(dgram, now());
+
+    let new_streams = client
+        .events()
+        .filter_map(|event| match event {
+            ConnectionEvent::NewStream { stream_id } => Some(stream_id),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(new_streams, vec![StreamId::new(7), lower_stream_id]);
+    assert_eq!(client.streams.recv_stream_count(), 4);
+    assert_eq!(
+        client.stream_recv(lower_stream_id, &mut data),
+        Ok((4, false))
+    );
+    assert_eq!(&data, b"late");
+
+    client.streams.clear_streams();
+    client.events().for_each(drop);
+    let dgram = send_with_extra(
+        &mut server,
+        StreamWriter {
+            stream_id: high_stream_id,
+            data: b"new!".to_vec(),
+        },
+        now(),
+    );
+    client.process_input(dgram, now());
+
+    let new_streams = client
+        .events()
+        .filter_map(|event| match event {
+            ConnectionEvent::NewStream { stream_id } => Some(stream_id),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        new_streams
+            .iter()
+            .filter(|stream_id| **stream_id == high_stream_id)
+            .count(),
+        1
+    );
+    assert_eq!(
+        client.stream_recv(high_stream_id, &mut data),
+        Ok((4, false))
+    );
+    assert_eq!(&data, b"new!");
+}
+
 #[test]
 /// Server sends a number of stream-related frames for a client-initiated stream that is not yet
 /// created. This should cause the client to close the connection.

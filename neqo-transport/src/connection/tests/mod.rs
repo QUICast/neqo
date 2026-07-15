@@ -43,6 +43,8 @@ mod ecn;
 mod handshake;
 mod idle;
 mod keys;
+#[cfg(feature = "mcquic")]
+mod mcquic;
 mod migration;
 mod null;
 mod pmtud;

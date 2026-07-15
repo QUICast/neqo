@@ -1433,6 +1433,16 @@ impl Http3Client {
         Ok(self.conn.mcquic_send_pending_acks()?)
     }
 
+    /// Queue channel ACKs that are due under their announced policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when an ACK cannot be queued.
+    #[cfg(feature = "mcquic")]
+    pub fn mcquic_send_due_acks(&mut self, now: Instant) -> Res<bool> {
+        Ok(self.conn.mcquic_send_due_acks(now)?)
+    }
+
     #[must_use]
     pub const fn webtransport_enabled(&self) -> bool {
         self.base_handler.webtransport_enabled()

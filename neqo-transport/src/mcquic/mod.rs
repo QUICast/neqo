@@ -14,6 +14,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    time::{Duration, Instant},
 };
 
 use neqo_common::{Buffer, Decoder, Encoder};
@@ -35,6 +36,11 @@ use crate::{
 const IP_FLAG_V4_ALLOWED: u8 = 0x01;
 const IP_FLAG_V6_ALLOWED: u8 = 0x02;
 const MAX_ACK_RANGE_COUNT: u64 = 32 * 1024;
+const MAX_TRACKED_ACK_RANGES: usize = 64;
+const ACK_HISTORY_PACKET_WINDOW: u64 = 4 * 1024;
+// Draft-08 has no wire field for the ACK threshold. Three packets keeps ACK
+// traffic bounded while the advertised maximum delay remains authoritative.
+const ACK_ELICITING_THRESHOLD: u64 = 2;
 const MCQUIC_VERSION: Version = Version::Version1;
 const SHORT_HEADER_FIXED_BIT: u8 = 0x40;
 const SHORT_HEADER_FORM_BIT: u8 = 0x80;
@@ -708,6 +714,9 @@ impl ChannelReceiveState {
                 .packet_number_start
                 .checked_add(offset)
                 .ok_or(Error::IntegerOverflow)?;
+            if self.ack_tracker.is_retired(packet_number) {
+                continue;
+            }
             self.integrity_hashes
                 .insert(packet_number, integrity.packet_hashes[start..end].to_vec());
         }
@@ -744,6 +753,10 @@ impl ChannelReceiveState {
         self.largest_observed_packet_number = self
             .largest_observed_packet_number
             .max(parsed.packet_number);
+
+        if self.ack_tracker.is_retired(parsed.packet_number) {
+            return Ok(Vec::new());
+        }
 
         if self.accepted_packets.contains(&parsed.packet_number)
             || self.pending_packets.contains_key(&parsed.packet_number)
@@ -783,6 +796,9 @@ impl ChannelReceiveState {
     ) -> Res<Vec<ChannelDatagram>> {
         self.check_channel_id(&packet.channel_id)?;
         let packet_number = packet.packet_number;
+        if self.ack_tracker.is_retired(packet_number) {
+            return Ok(Vec::new());
+        }
         if self.accepted_packets.contains(&packet_number) {
             return Ok(Vec::new());
         }
@@ -806,6 +822,18 @@ impl ChannelReceiveState {
     #[must_use]
     pub fn pending_ack(&self) -> Option<Ack> {
         self.ack_tracker.pending_ack(&self.announce.channel_id)
+    }
+
+    pub(crate) fn pending_ack_if_due(&self, now: Instant) -> Option<Ack> {
+        self.ack_tracker.pending_ack_if_due(
+            &self.announce.channel_id,
+            Duration::from_millis(self.announce.max_ack_delay_ms),
+            now,
+        )
+    }
+
+    pub(crate) const fn note_released_at(&mut self, now: Instant) {
+        self.ack_tracker.note_pending_at(now);
     }
 
     /// Mark pending ACK state as sent.
@@ -881,6 +909,7 @@ impl ChannelReceiveState {
 
     fn release_packet(&mut self, packet: ChannelPacket) -> ChannelPacket {
         let packet_number = packet.packet_number;
+        self.integrity_hashes.remove(&packet_number);
         for frame in &packet.frames {
             if let ChannelFrame::Datagram { data } = frame {
                 let datagram = ChannelDatagram {
@@ -892,7 +921,22 @@ impl ChannelReceiveState {
             }
         }
         self.ack_tracker.record_packet(packet_number);
+        self.prune_receive_history();
         packet
+    }
+
+    fn prune_receive_history(&mut self) {
+        let retired_before = self.ack_tracker.retired_before();
+        if retired_before == 0 {
+            return;
+        }
+
+        self.accepted_packets
+            .retain(|packet_number| *packet_number >= retired_before);
+        self.integrity_hashes
+            .retain(|packet_number, _| *packet_number >= retired_before);
+        self.pending_packets
+            .retain(|packet_number, _| *packet_number >= retired_before);
     }
 
     fn datagrams_from_packets(&self, packets: &[ChannelPacket]) -> Vec<ChannelDatagram> {
@@ -1641,11 +1685,39 @@ pub enum Sender {
 pub struct AckTracker {
     ranges: Vec<AckSpan>,
     pending: bool,
+    pending_packets: u64,
+    pending_since: Option<Instant>,
+    immediate: bool,
+    sent_once: bool,
+    retired_before: u64,
 }
 
 impl AckTracker {
     /// Record a validated multicast packet number.
     pub fn record_packet(&mut self, packet_number: u64) {
+        self.record_packet_inner(packet_number);
+    }
+
+    #[cfg(test)]
+    fn record_packet_at(&mut self, packet_number: u64, now: Instant) {
+        if self.record_packet_inner(packet_number) {
+            self.note_pending_at(now);
+        }
+    }
+
+    fn record_packet_inner(&mut self, packet_number: u64) -> bool {
+        if self.is_retired(packet_number)
+            || self
+                .ranges
+                .iter()
+                .any(|range| range.start <= packet_number && packet_number <= range.end)
+        {
+            return false;
+        }
+
+        let previous_largest = self.ranges.last().map(|range| range.end);
+        let reordered =
+            previous_largest.is_some_and(|largest| packet_number != largest.saturating_add(1));
         let mut start = packet_number;
         let mut end = packet_number;
         let mut insert_at = 0;
@@ -1667,12 +1739,46 @@ impl AckTracker {
         }
 
         self.ranges.insert(insert_at, AckSpan { start, end });
+        self.trim_history();
         self.pending = true;
+        self.pending_packets = self.pending_packets.saturating_add(1);
+        self.immediate |= !self.sent_once || reordered;
+        true
+    }
+
+    const fn note_pending_at(&mut self, now: Instant) {
+        if self.pending && self.pending_since.is_none() {
+            self.pending_since = Some(now);
+        }
     }
 
     /// Build a pending `MC_ACK`, if newly recorded packets are waiting.
     #[must_use]
     pub fn pending_ack(&self, channel_id: &[u8]) -> Option<Ack> {
+        self.build_pending_ack(channel_id)
+    }
+
+    fn pending_ack_if_due(
+        &self,
+        channel_id: &[u8],
+        max_ack_delay: Duration,
+        now: Instant,
+    ) -> Option<Ack> {
+        let deadline_reached = self
+            .pending_since
+            .is_some_and(|since| now.saturating_duration_since(since) >= max_ack_delay);
+        if !self.pending
+            || !(self.immediate
+                || self.pending_packets > ACK_ELICITING_THRESHOLD
+                || deadline_reached)
+        {
+            return None;
+        }
+
+        self.build_pending_ack(channel_id)
+    }
+
+    fn build_pending_ack(&self, channel_id: &[u8]) -> Option<Ack> {
         if !self.pending || self.ranges.is_empty() {
             return None;
         }
@@ -1708,6 +1814,39 @@ impl AckTracker {
     /// Mark pending ACK state as sent.
     pub const fn mark_sent(&mut self) {
         self.pending = false;
+        self.pending_packets = 0;
+        self.pending_since = None;
+        self.immediate = false;
+        self.sent_once = true;
+    }
+
+    const fn is_retired(&self, packet_number: u64) -> bool {
+        packet_number < self.retired_before
+    }
+
+    const fn retired_before(&self) -> u64 {
+        self.retired_before
+    }
+
+    fn trim_history(&mut self) {
+        let Some(largest) = self.ranges.last().map(|range| range.end) else {
+            return;
+        };
+        self.retired_before = self
+            .retired_before
+            .max(largest.saturating_sub(ACK_HISTORY_PACKET_WINDOW.saturating_sub(1)));
+        self.ranges.retain(|range| range.end >= self.retired_before);
+        if let Some(first) = self.ranges.first_mut() {
+            first.start = first.start.max(self.retired_before);
+        }
+
+        if self.ranges.len() > MAX_TRACKED_ACK_RANGES {
+            let remove = self.ranges.len() - MAX_TRACKED_ACK_RANGES;
+            self.ranges.drain(..remove);
+            if let Some(first) = self.ranges.first() {
+                self.retired_before = self.retired_before.max(first.start);
+            }
+        }
     }
 }
 
@@ -1998,7 +2137,7 @@ fn usize_to_u64(value: usize) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use test_fixture::fixture_init;
+    use test_fixture::{fixture_init, now};
 
     use super::*;
 
@@ -2231,6 +2370,110 @@ mod tests {
 
         tracker.mark_sent();
         assert!(tracker.pending_ack(b"ch").is_none());
+    }
+
+    #[test]
+    fn ack_tracker_bounds_ranges_and_retires_old_history() {
+        let mut tracker = AckTracker::default();
+        let now = now();
+        for index in 0..(MAX_TRACKED_ACK_RANGES + 16) {
+            tracker.record_packet_at(u64::try_from(index * 2).unwrap(), now);
+        }
+
+        assert_eq!(tracker.ranges.len(), MAX_TRACKED_ACK_RANGES);
+        assert!(tracker.retired_before() > 0);
+        let ack = tracker.pending_ack(b"ch").expect("bounded ACK");
+        assert_eq!(ack.ack_ranges.len(), MAX_TRACKED_ACK_RANGES - 1);
+
+        let ranges = tracker.ranges.clone();
+        tracker.record_packet_at(tracker.retired_before() - 1, now);
+        assert_eq!(tracker.ranges, ranges);
+    }
+
+    #[test]
+    fn ack_tracker_bounds_contiguous_packet_window() {
+        let mut tracker = AckTracker::default();
+        let now = now();
+        for packet_number in 0..ACK_HISTORY_PACKET_WINDOW + 10 {
+            tracker.record_packet_at(packet_number, now);
+        }
+
+        assert_eq!(tracker.retired_before(), 10);
+        assert_eq!(
+            tracker.ranges,
+            vec![AckSpan {
+                start: 10,
+                end: ACK_HISTORY_PACKET_WINDOW + 9,
+            }]
+        );
+    }
+
+    #[test]
+    fn ack_tracker_honors_threshold_deadline_and_reordering() {
+        let mut tracker = AckTracker::default();
+        let start = now();
+        let max_ack_delay = Duration::from_millis(100);
+
+        tracker.record_packet_at(0, start);
+        assert!(
+            tracker
+                .pending_ack_if_due(b"ch", max_ack_delay, start)
+                .is_some(),
+            "first ACK is immediate"
+        );
+        tracker.mark_sent();
+
+        tracker.record_packet_at(1, start + Duration::from_millis(1));
+        tracker.record_packet_at(2, start + Duration::from_millis(2));
+        assert!(
+            tracker
+                .pending_ack_if_due(b"ch", max_ack_delay, start + Duration::from_millis(2))
+                .is_none()
+        );
+        tracker.record_packet_at(3, start + Duration::from_millis(3));
+        assert!(
+            tracker
+                .pending_ack_if_due(b"ch", max_ack_delay, start + Duration::from_millis(3))
+                .is_some(),
+            "third packet crosses the threshold"
+        );
+        tracker.mark_sent();
+
+        tracker.record_packet_at(4, start + Duration::from_millis(4));
+        assert!(
+            tracker
+                .pending_ack_if_due(b"ch", max_ack_delay, start + Duration::from_millis(103))
+                .is_none()
+        );
+        assert!(
+            tracker
+                .pending_ack_if_due(b"ch", max_ack_delay, start + Duration::from_millis(104))
+                .is_some(),
+            "maximum ACK delay is authoritative"
+        );
+        tracker.mark_sent();
+
+        tracker.record_packet_at(6, start + Duration::from_millis(105));
+        assert!(
+            tracker
+                .pending_ack_if_due(b"ch", max_ack_delay, start + Duration::from_millis(105))
+                .is_some(),
+            "a packet-number gap triggers an immediate ACK"
+        );
+    }
+
+    #[test]
+    fn channel_receive_prunes_retired_packet_history() {
+        let mut state = ChannelReceiveState::new(announce()).expect("receive state");
+        let now = now();
+        for packet_number in 0..ACK_HISTORY_PACKET_WINDOW + 10 {
+            state.accepted_packets.insert(packet_number);
+            state.ack_tracker.record_packet_at(packet_number, now);
+        }
+        state.prune_receive_history();
+
+        assert_eq!(state.accepted_packets.len(), 4096);
+        assert_eq!(state.accepted_packets.first(), Some(&10));
     }
 
     #[test]

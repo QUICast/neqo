@@ -177,6 +177,8 @@ mod mcquic_tests {
         0x40, 0x54, // stream type 0x54, encoded in two bytes
         0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // session ID 0, eight bytes
     ];
+    const LATE_JOIN_STREAM_ORDINAL: u64 = 1_000_000;
+    const LATE_JOIN_STREAM_ID: StreamId = StreamId::new(LATE_JOIN_STREAM_ORDINAL * 4 + 3);
 
     fn connected_mcquic_with_client_connection_params(
         connection_parameters: ConnectionParameters,
@@ -343,6 +345,113 @@ mod mcquic_tests {
                 .mcquic_send_pending_acks()
                 .expect("ACK state was marked sent")
         );
+    }
+
+    #[test]
+    fn high_multicast_stream_materializes_only_the_target() {
+        let (mut client, mut server) = connected_mcquic_with_client_connection_params(
+            ConnectionParameters::default()
+                .max_streams(StreamType::UniDi, LATE_JOIN_STREAM_ORDINAL + 1),
+        );
+        prepare_channel(&mut client, &mut server);
+        client.events().for_each(drop);
+
+        let body = b"late-join-body";
+        let (packet, integrity) = encode_channel_packet(&[ChannelFrame::Stream {
+            stream_id: LATE_JOIN_STREAM_ID.as_u64(),
+            offset: 10,
+            fin: true,
+            data: body.to_vec(),
+        }]);
+        send_server_control(&mut client, &mut server, Frame::Integrity(integrity));
+        process_channel_packet(&mut client, &packet).expect("authenticated high stream");
+
+        let new_streams = client
+            .events()
+            .filter_map(|event| match event {
+                ConnectionEvent::NewStream { stream_id } => Some(stream_id),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(new_streams, vec![LATE_JOIN_STREAM_ID]);
+        assert_eq!(
+            read_stream(&mut client, LATE_JOIN_STREAM_ID, 64),
+            (Vec::new(), false)
+        );
+    }
+
+    #[test]
+    fn high_multicast_reset_materializes_only_the_target() {
+        let (mut client, mut server) = connected_mcquic_with_client_connection_params(
+            ConnectionParameters::default()
+                .max_streams(StreamType::UniDi, LATE_JOIN_STREAM_ORDINAL + 1),
+        );
+        prepare_channel(&mut client, &mut server);
+        client.events().for_each(drop);
+
+        let (packet, integrity) = encode_channel_packet(&[ChannelFrame::ResetStream {
+            stream_id: LATE_JOIN_STREAM_ID.as_u64(),
+            error_code: 42,
+            final_size: 0,
+        }]);
+        send_server_control(&mut client, &mut server, Frame::Integrity(integrity));
+        process_channel_packet(&mut client, &packet).expect("authenticated high reset");
+
+        let events = client.events().collect::<Vec<_>>();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, ConnectionEvent::NewStream { .. }))
+                .count(),
+            1
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            ConnectionEvent::NewStream { stream_id } if *stream_id == LATE_JOIN_STREAM_ID
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            ConnectionEvent::RecvStreamReset {
+                stream_id,
+                app_error: 42,
+            } if *stream_id == LATE_JOIN_STREAM_ID
+        )));
+    }
+
+    #[test]
+    fn high_multicast_stream_preserves_final_size_validation() {
+        let (mut client, mut server) = connected_mcquic_with_client_connection_params(
+            ConnectionParameters::default()
+                .max_streams(StreamType::UniDi, LATE_JOIN_STREAM_ORDINAL + 1),
+        );
+        prepare_channel(&mut client, &mut server);
+
+        let (packet, integrity) = encode_channel_packet(&[
+            ChannelFrame::Stream {
+                stream_id: LATE_JOIN_STREAM_ID.as_u64(),
+                offset: 10,
+                fin: true,
+                data: b"body".to_vec(),
+            },
+            ChannelFrame::ResetStream {
+                stream_id: LATE_JOIN_STREAM_ID.as_u64(),
+                error_code: 42,
+                final_size: 13,
+            },
+        ]);
+        send_server_control(&mut client, &mut server, Frame::Integrity(integrity));
+
+        assert_eq!(
+            process_channel_packet(&mut client, &packet),
+            Err(Error::FinalSize)
+        );
+        assert!(matches!(
+            client.state(),
+            State::Closing {
+                error: CloseReason::Transport(Error::FinalSize),
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -642,11 +751,12 @@ mod mcquic_tests {
     #[test]
     fn multicast_stream_obeys_stream_limits() {
         let (mut client, mut server) = connected_mcquic_with_client_connection_params(
-            ConnectionParameters::default().max_streams(StreamType::UniDi, 0),
+            ConnectionParameters::default()
+                .max_streams(StreamType::UniDi, LATE_JOIN_STREAM_ORDINAL),
         );
         prepare_channel(&mut client, &mut server);
         let (packet, integrity) = encode_channel_packet(&[ChannelFrame::Stream {
-            stream_id: 3,
+            stream_id: LATE_JOIN_STREAM_ID.as_u64(),
             offset: 10,
             fin: false,
             data: b"body".to_vec(),
@@ -670,21 +780,13 @@ mod mcquic_tests {
     fn multicast_stream_obeys_flow_control() {
         let (mut client, mut server) = connected_mcquic_with_client_connection_params(
             ConnectionParameters::default()
+                .max_streams(StreamType::UniDi, LATE_JOIN_STREAM_ORDINAL + 1)
                 .max_data(10)
                 .max_stream_data(StreamType::UniDi, true, 10),
         );
-        let stream_id = server
-            .stream_create(StreamType::UniDi)
-            .expect("server stream");
-        send_server_stream_data(
-            &mut client,
-            &mut server,
-            stream_id,
-            &WEBTRANSPORT_UNI_PREFIX,
-        );
         prepare_channel(&mut client, &mut server);
         let (packet, integrity) = encode_channel_packet(&[ChannelFrame::Stream {
-            stream_id: stream_id.as_u64(),
+            stream_id: LATE_JOIN_STREAM_ID.as_u64(),
             offset: 10,
             fin: false,
             data: vec![0xff],
