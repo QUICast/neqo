@@ -1361,6 +1361,78 @@ impl Http3Client {
         self.conn.stats()
     }
 
+    #[cfg(feature = "mcquic")]
+    #[must_use]
+    pub fn peer_mcquic_server_support(&self) -> bool {
+        self.conn.peer_mcquic_server_support()
+    }
+
+    #[cfg(feature = "mcquic")]
+    #[must_use]
+    pub fn peer_mcquic_client_params(
+        &self,
+    ) -> Option<neqo_transport::mcquic::ClientTransportParams> {
+        self.conn.peer_mcquic_client_params()
+    }
+
+    /// Queue an MCQUIC control frame on the unicast QUIC connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if MCQUIC is unavailable or the frame is invalid.
+    #[cfg(feature = "mcquic")]
+    pub fn mcquic_send(&mut self, frame: neqo_transport::mcquic::Frame) -> Res<()> {
+        self.conn.mcquic_send(frame)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "mcquic")]
+    #[must_use]
+    pub fn mcquic_readable(&self) -> bool {
+        self.conn.mcquic_readable()
+    }
+
+    #[cfg(feature = "mcquic")]
+    pub fn mcquic_recv(&mut self) -> Option<neqo_transport::mcquic::Frame> {
+        self.conn.mcquic_recv()
+    }
+
+    /// Process one protected multicast channel packet in transport context.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when authentication or ordinary QUIC frame processing
+    /// fails.
+    #[cfg(feature = "mcquic")]
+    pub fn mcquic_process_channel_packet(
+        &mut self,
+        channel_id: &[u8],
+        protected_packet: &[u8],
+        now: Instant,
+    ) -> Res<()> {
+        self.conn
+            .mcquic_process_channel_packet(channel_id, protected_packet, now)?;
+        Ok(())
+    }
+
+    /// Pop a legacy DATAGRAM released from an authenticated channel packet.
+    #[cfg(feature = "mcquic")]
+    pub fn mcquic_pop_channel_datagram(
+        &mut self,
+    ) -> Option<neqo_transport::mcquic::ChannelDatagram> {
+        self.conn.mcquic_pop_channel_datagram()
+    }
+
+    /// Queue pending channel ACKs on the unicast QUIC connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when an ACK cannot be queued.
+    #[cfg(feature = "mcquic")]
+    pub fn mcquic_send_pending_acks(&mut self) -> Res<bool> {
+        Ok(self.conn.mcquic_send_pending_acks()?)
+    }
+
     #[must_use]
     pub const fn webtransport_enabled(&self) -> bool {
         self.base_handler.webtransport_enabled()

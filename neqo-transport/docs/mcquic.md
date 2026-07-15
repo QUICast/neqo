@@ -25,8 +25,11 @@ Current first-slice support includes:
 - ACK range tracking
 - NSS-backed multicast packet header protection and AEAD encode/decode
 - receive-side primitives for keys, integrity state, protected channel packet
-  buffering, integrity validation, and release of validated channel DATAGRAM
-  frames
+  buffering, integrity validation, and authenticated frame release
+- connection-owned channel receive state that applies authenticated STREAM and
+  RESET_STREAM frames through Neqo's ordinary QUIC receive-stream machinery
+- ordinary stream limits, flow control, final-size handling, reset events,
+  out-of-order reassembly, and unicast/multicast overlap checks for channel data
 - an `examples/mcquic_hex.rs` helper for comparing wire encodings against other
   QUICast implementations
 - a `scripts/mcquic_interop_vectors.sh` helper that diffs those encodings
@@ -47,8 +50,26 @@ Review-facing Neqo API surface:
 - queue and receive unicast MCQUIC control frames with
   `Connection::mcquic_send()`, `Connection::mcquic_readable()`, and
   `Connection::mcquic_recv()`
-- validate caller-supplied multicast UDP payloads with `ChannelReceiveState`
-  and release validated `ChannelDatagram` values
+- validate caller-supplied multicast UDP payloads in connection context with
+  `Connection::mcquic_process_channel_packet()`
+- queue generated acknowledgements with
+  `Connection::mcquic_send_pending_acks()`
+- retain the prototype DATAGRAM bridge with
+  `Connection::mcquic_pop_channel_datagram()` or the standalone
+  `ChannelReceiveState` API
+
+Current intentional limits:
+
+- the send-side channel packet helper always emits four-byte packet numbers,
+  while the receive path accepts the packet number length encoded in the short
+  header
+- the current draft has not assigned a wire code for `MC_EXTENSION_ERROR`, so
+  conflicting overlapping stream bytes currently close with QUIC
+  `PROTOCOL_VIOLATION`
+- the HTTP/3 raw DATAGRAM bridge used by Firefox glue is a bounded internal
+  queue for native prototype work, not a long-term web-exposed API
+- socket joins, interface selection, channel join/leave policy, rate policy,
+  and fallback policy remain caller-owned
 
 Neqo still does not own multicast sockets. The fire-test helper is intentionally
 outside the crate dependency graph so Gecko/Necko can remain the future owner of

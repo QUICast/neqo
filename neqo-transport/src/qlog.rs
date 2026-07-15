@@ -387,7 +387,6 @@ pub fn mtu_updated(qlog: &mut Qlog, old_mtu: usize, new_mtu: usize, done: bool, 
 }
 
 #[derive(Clone, Copy)]
-#[expect(dead_code, reason = "TODO: Construct all variants.")]
 pub enum Metric {
     MinRtt(Duration),
     SmoothedRtt(Duration),
@@ -397,6 +396,7 @@ pub enum Metric {
     CongestionWindow(usize),
     BytesInFlight(usize),
     SsThresh(usize),
+    #[expect(dead_code, reason = "Reserved for future packet-count qlog updates.")]
     PacketsInFlight(u64),
     PacingRate(u64),
 }

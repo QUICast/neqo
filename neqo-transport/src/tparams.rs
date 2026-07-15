@@ -337,9 +337,10 @@ impl TransportParameter {
             },
             TransportParameterId::VersionInformation => Self::decode_versions(&mut d)?,
             #[cfg(feature = "mcquic")]
-            TransportParameterId::MulticastClientParams => {
-                Self::MulticastClientParams(crate::mcquic::ClientTransportParams::decode(&mut d)?)
-            }
+            TransportParameterId::MulticastClientParams => Self::MulticastClientParams(
+                crate::mcquic::ClientTransportParams::decode(&mut d)
+                    .map_err(|_| Error::TransportParameter)?,
+            ),
             #[cfg(feature = "mcquic")]
             TransportParameterId::MulticastServerSupport => Self::Empty,
             #[cfg(test)]
@@ -524,6 +525,11 @@ impl TransportParameters {
     }
 
     /// Get decoded MCQUIC client transport parameters.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal transport parameter table stores an unexpected
+    /// value type for `MulticastClientParams`.
     #[cfg(feature = "mcquic")]
     #[must_use]
     pub fn get_mcquic_client_params(&self) -> Option<&crate::mcquic::ClientTransportParams> {
@@ -1064,6 +1070,32 @@ mod tests {
             TransportParameters::decode(&mut enc.as_decoder()).expect("decode transport params");
 
         assert_eq!(decoded.get_mcquic_client_params(), Some(&params));
+    }
+
+    #[cfg(feature = "mcquic")]
+    #[test]
+    fn malformed_mcquic_client_params_is_transport_parameter_error() {
+        let mut params = crate::mcquic::ClientTransportParams {
+            limits: crate::mcquic::ClientLimits {
+                ipv4_channels_allowed: true,
+                ipv6_channels_allowed: false,
+                max_aggregate_rate_kibps: 100_000,
+                max_channel_ids: 32,
+            },
+            hash_algorithms: vec![1],
+            encryption_algorithms: vec![0x1301],
+        }
+        .to_vec();
+        params.push(0);
+
+        let mut enc = Encoder::default();
+        enc.encode_varint(u64::from(MulticastClientParams))
+            .encode_vvec(&params);
+
+        assert_eq!(
+            TransportParameter::decode(&mut enc.as_decoder()).unwrap_err(),
+            Error::TransportParameter
+        );
     }
 
     #[cfg(feature = "mcquic")]

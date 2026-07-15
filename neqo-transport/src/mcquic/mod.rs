@@ -40,41 +40,43 @@ const SHORT_HEADER_FIXED_BIT: u8 = 0x40;
 const SHORT_HEADER_FORM_BIT: u8 = 0x80;
 const SHORT_HEADER_KEY_PHASE_BIT: u8 = 0x04;
 const SHORT_HEADER_HP_MASK: u8 = 0x1f;
+// The send path uses a fixed four-byte packet number for now. The receive path
+// still accepts the packet number length encoded in the short header.
 const PACKET_NUMBER_LEN: usize = 4;
 const HP_SAMPLE_SIZE: usize = 16;
 const HP_SAMPLE_OFFSET: usize = 4;
 
 /// Experimental transport parameter ID for client multicast capabilities.
-pub const CLIENT_PARAMS_TRANSPORT_PARAMETER_ID: u64 = 0xff3e800;
+pub const CLIENT_PARAMS_TRANSPORT_PARAMETER_ID: u64 = 0x0ff3_e800;
 /// Experimental transport parameter ID for server multicast support.
-pub const SERVER_SUPPORT_TRANSPORT_PARAMETER_ID: u64 = 0xff3e808;
+pub const SERVER_SUPPORT_TRANSPORT_PARAMETER_ID: u64 = 0x0ff3_e808;
 
 /// Experimental frame type for `MC_KEY`.
-pub const FRAME_TYPE_KEY: u64 = 0xff3e801;
+pub const FRAME_TYPE_KEY: u64 = 0x0ff3_e801;
 /// Experimental frame type for `MC_JOIN`.
-pub const FRAME_TYPE_JOIN: u64 = 0xff3e802;
+pub const FRAME_TYPE_JOIN: u64 = 0x0ff3_e802;
 /// Experimental frame type for `MC_LEAVE`.
-pub const FRAME_TYPE_LEAVE: u64 = 0xff3e803;
+pub const FRAME_TYPE_LEAVE: u64 = 0x0ff3_e803;
 /// Experimental frame type for `MC_INTEGRITY`.
-pub const FRAME_TYPE_INTEGRITY: u64 = 0xff3e804;
+pub const FRAME_TYPE_INTEGRITY: u64 = 0x0ff3_e804;
 /// Experimental frame type for `MC_INTEGRITY_WITH_LENGTH`.
-pub const FRAME_TYPE_INTEGRITY_WITH_LENGTH: u64 = 0xff3e805;
+pub const FRAME_TYPE_INTEGRITY_WITH_LENGTH: u64 = 0x0ff3_e805;
 /// Experimental frame type for `MC_ACK`.
-pub const FRAME_TYPE_ACK: u64 = 0xff3e806;
+pub const FRAME_TYPE_ACK: u64 = 0x0ff3_e806;
 /// Experimental frame type for `MC_ACK_ECN`.
-pub const FRAME_TYPE_ACK_ECN: u64 = 0xff3e807;
+pub const FRAME_TYPE_ACK_ECN: u64 = 0x0ff3_e807;
 /// Experimental frame type for `MC_LIMITS`.
-pub const FRAME_TYPE_LIMITS: u64 = 0xff3e809;
+pub const FRAME_TYPE_LIMITS: u64 = 0x0ff3_e809;
 /// Experimental frame type for `MC_RETIRE`.
-pub const FRAME_TYPE_RETIRE: u64 = 0xff3e80a;
+pub const FRAME_TYPE_RETIRE: u64 = 0x0ff3_e80a;
 /// Experimental frame type for transport-scoped `MC_STATE`.
-pub const FRAME_TYPE_STATE: u64 = 0xff3e80b;
+pub const FRAME_TYPE_STATE: u64 = 0x0ff3_e80b;
 /// Experimental frame type for application-scoped `MC_STATE`.
-pub const FRAME_TYPE_STATE_APPLICATION: u64 = 0xff3e80c;
+pub const FRAME_TYPE_STATE_APPLICATION: u64 = 0x0ff3_e80c;
 /// Experimental frame type for IPv4 `MC_ANNOUNCE`.
-pub const FRAME_TYPE_ANNOUNCE_V4: u64 = 0xff3e811;
+pub const FRAME_TYPE_ANNOUNCE_V4: u64 = 0x0ff3_e811;
 /// Experimental frame type for IPv6 `MC_ANNOUNCE`.
-pub const FRAME_TYPE_ANNOUNCE_V6: u64 = 0xff3e812;
+pub const FRAME_TYPE_ANNOUNCE_V6: u64 = 0x0ff3_e812;
 
 /// Transport-scoped `MC_STATE` reason used for server-requested transitions.
 pub const STATE_REASON_REQUESTED_BY_SERVER: u64 = 0x1;
@@ -94,7 +96,7 @@ pub struct ClientLimits {
 }
 
 impl ClientLimits {
-    fn flags(&self) -> u8 {
+    const fn flags(&self) -> u8 {
         let mut flags = 0;
         if self.ipv4_channels_allowed {
             flags |= IP_FLAG_V4_ALLOWED;
@@ -211,6 +213,7 @@ pub struct Announce {
 
 /// A full `MC_KEY` frame payload.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[expect(clippy::struct_field_names, reason = "Field names mirror the draft.")]
 pub struct Key {
     /// The channel ID being updated.
     pub channel_id: Vec<u8>,
@@ -270,6 +273,7 @@ pub struct AckRange {
 
 /// ECN counters carried by `MC_ACK_ECN`.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[expect(clippy::struct_field_names, reason = "Field names mirror the draft.")]
 pub struct AckEcnCounts {
     /// Count of ECT(0) packets.
     pub ect0_count: u64,
@@ -281,6 +285,7 @@ pub struct AckEcnCounts {
 
 /// A full `MC_ACK` frame payload.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[expect(clippy::struct_field_names, reason = "Field names mirror the draft.")]
 pub struct Ack {
     /// The acknowledged channel ID.
     pub channel_id: Vec<u8>,
@@ -298,6 +303,7 @@ pub struct Ack {
 
 /// A full `MC_LIMITS` frame payload.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[expect(clippy::struct_field_names, reason = "Field names mirror the draft.")]
 pub struct Limits {
     /// Client limits sequence number.
     pub sequence: u64,
@@ -330,7 +336,7 @@ pub enum ChannelState {
 }
 
 impl ChannelState {
-    fn decode(v: u8) -> Res<Self> {
+    const fn decode(v: u8) -> Res<Self> {
         match v {
             0x1 => Ok(Self::Left),
             0x2 => Ok(Self::DeclinedJoin),
@@ -363,6 +369,7 @@ pub enum StateReasonScope {
 
 /// A full `MC_STATE` frame payload.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[expect(clippy::struct_field_names, reason = "Field names mirror the draft.")]
 pub struct State {
     /// The channel ID whose state changed.
     pub channel_id: Vec<u8>,
@@ -629,12 +636,23 @@ impl ChannelReceiveState {
         &self.announce.channel_id
     }
 
+    /// Return the announcement that defines this receive state.
+    #[must_use]
+    pub const fn announce(&self) -> &Announce {
+        &self.announce
+    }
+
     /// Insert an `MC_KEY` for this channel.
     ///
     /// # Errors
     ///
     /// Returns an error if the key is for another channel.
     pub fn insert_key(&mut self, key: Key) -> Res<Vec<ChannelDatagram>> {
+        let packets = self.insert_key_for_connection(key)?;
+        Ok(self.datagrams_from_packets(&packets))
+    }
+
+    pub(crate) fn insert_key_for_connection(&mut self, key: Key) -> Res<Vec<ChannelPacket>> {
         self.check_channel_id(&key.channel_id)?;
         if let Some(existing) = self.keys.get(&key.key_sequence)
             && (existing.from_packet_number != key.from_packet_number
@@ -652,7 +670,19 @@ impl ChannelReceiveState {
     ///
     /// Returns an error if the frame is for another channel or its hash payload
     /// does not align with the announced hash algorithm.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "Public API accepts decoded frames by value for queue handoff."
+    )]
     pub fn insert_integrity(&mut self, integrity: Integrity) -> Res<Vec<ChannelDatagram>> {
+        let packets = self.insert_integrity_for_connection(&integrity)?;
+        Ok(self.datagrams_from_packets(&packets))
+    }
+
+    pub(crate) fn insert_integrity_for_connection(
+        &mut self,
+        integrity: &Integrity,
+    ) -> Res<Vec<ChannelPacket>> {
         self.check_channel_id(&integrity.channel_id)?;
         let hash_len = self.integrity_hash.output_len();
         let hash_count = if let Some(hash_count) = integrity.packet_hash_count {
@@ -698,6 +728,14 @@ impl ChannelReceiveState {
         &mut self,
         protected_packet: &[u8],
     ) -> Res<Vec<ChannelDatagram>> {
+        let packets = self.process_protected_packet_for_connection(protected_packet)?;
+        Ok(self.datagrams_from_packets(&packets))
+    }
+
+    pub(crate) fn process_protected_packet_for_connection(
+        &mut self,
+        protected_packet: &[u8],
+    ) -> Res<Vec<ChannelPacket>> {
         let parsed = parse_channel_packet_metadata(
             &self.announce,
             protected_packet,
@@ -721,8 +759,10 @@ impl ChannelReceiveState {
             },
         );
 
-        self.try_release_packet(parsed.packet_number)
-            .map(Option::unwrap_or_default)
+        Ok(self
+            .try_release_packet(parsed.packet_number)?
+            .into_iter()
+            .collect())
     }
 
     /// Validate an already-decoded channel packet and release any DATAGRAMs.
@@ -742,13 +782,19 @@ impl ChannelReceiveState {
         protected_packet: &[u8],
     ) -> Res<Vec<ChannelDatagram>> {
         self.check_channel_id(&packet.channel_id)?;
+        let packet_number = packet.packet_number;
+        if self.accepted_packets.contains(&packet_number) {
+            return Ok(Vec::new());
+        }
         if !self.keys.contains_key(&packet.key_sequence) {
             return Err(Error::NotAvailable);
         }
-        self.validate_integrity(packet.packet_number, protected_packet)?;
+        self.validate_integrity(packet_number, protected_packet)?;
 
-        let released = self.release_packet_datagrams(packet);
-        Ok(released)
+        self.pending_packets.remove(&packet_number);
+        self.accepted_packets.insert(packet_number);
+        let packet = self.release_packet(packet);
+        Ok(self.datagrams_from_packets(std::slice::from_ref(&packet)))
     }
 
     /// Pop a released channel DATAGRAM.
@@ -763,7 +809,7 @@ impl ChannelReceiveState {
     }
 
     /// Mark pending ACK state as sent.
-    pub fn mark_ack_sent(&mut self) {
+    pub const fn mark_ack_sent(&mut self) {
         self.ack_tracker.mark_sent();
     }
 
@@ -788,18 +834,18 @@ impl ChannelReceiveState {
         }
     }
 
-    fn release_ready_packets(&mut self) -> Res<Vec<ChannelDatagram>> {
+    fn release_ready_packets(&mut self) -> Res<Vec<ChannelPacket>> {
         let packet_numbers = self.pending_packets.keys().copied().collect::<Vec<_>>();
         let mut released = Vec::new();
         for packet_number in packet_numbers {
-            if let Some(mut datagrams) = self.try_release_packet(packet_number)? {
-                released.append(&mut datagrams);
+            if let Some(packet) = self.try_release_packet(packet_number)? {
+                released.push(packet);
             }
         }
         Ok(released)
     }
 
-    fn try_release_packet(&mut self, packet_number: u64) -> Res<Option<Vec<ChannelDatagram>>> {
+    fn try_release_packet(&mut self, packet_number: u64) -> Res<Option<ChannelPacket>> {
         let Some(pending) = self.pending_packets.get(&packet_number) else {
             return Ok(None);
         };
@@ -823,32 +869,48 @@ impl ChannelReceiveState {
             self.largest_observed_packet_number,
         )?;
         self.accepted_packets.insert(packet_number);
-        Ok(Some(self.release_packet_datagrams(packet)))
+        Ok(Some(self.release_packet(packet)))
     }
 
     fn select_key(&self, packet_number: u64, key_phase: bool) -> Option<&Key> {
         self.keys.values().rev().find(|key| {
             key.from_packet_number <= packet_number
-                && (key.key_sequence % 2 == if key_phase { 1 } else { 0 })
+                && (key.key_sequence % 2 == u64::from(key_phase))
         })
     }
 
-    fn release_packet_datagrams(&mut self, packet: ChannelPacket) -> Vec<ChannelDatagram> {
+    fn release_packet(&mut self, packet: ChannelPacket) -> ChannelPacket {
         let packet_number = packet.packet_number;
-        let mut released = Vec::new();
-        for frame in packet.frames {
+        for frame in &packet.frames {
             if let ChannelFrame::Datagram { data } = frame {
                 let datagram = ChannelDatagram {
                     channel_id: self.announce.channel_id.clone(),
                     packet_number,
-                    data,
+                    data: data.clone(),
                 };
-                self.datagrams.push_back(datagram.clone());
-                released.push(datagram);
+                self.datagrams.push_back(datagram);
             }
         }
         self.ack_tracker.record_packet(packet_number);
-        released
+        packet
+    }
+
+    fn datagrams_from_packets(&self, packets: &[ChannelPacket]) -> Vec<ChannelDatagram> {
+        packets
+            .iter()
+            .flat_map(|packet| {
+                packet.frames.iter().filter_map(|frame| {
+                    let ChannelFrame::Datagram { data } = frame else {
+                        return None;
+                    };
+                    Some(ChannelDatagram {
+                        channel_id: self.announce.channel_id.clone(),
+                        packet_number: packet.packet_number,
+                        data: data.clone(),
+                    })
+                })
+            })
+            .collect()
     }
 }
 
@@ -878,7 +940,7 @@ fn encode_protected_channel_packet(
     let mut packet =
         Vec::with_capacity(1 + announce.channel_id.len() + PACKET_NUMBER_LEN + payload.len() + 16);
     let first = SHORT_HEADER_FIXED_BIT
-        | (((key_phase as u8) << 2) & SHORT_HEADER_KEY_PHASE_BIT)
+        | ((u8::from(key_phase) << 2) & SHORT_HEADER_KEY_PHASE_BIT)
         | (u8::try_from(PACKET_NUMBER_LEN)? - 1);
     packet.push(first);
     packet.extend_from_slice(&announce.channel_id);
@@ -1053,21 +1115,27 @@ fn encode_packet_number(
     packet_number_len: usize,
     out: &mut Vec<u8>,
 ) -> Res<()> {
-    if packet_number_len > PACKET_NUMBER_LEN {
+    if !(1..=PACKET_NUMBER_LEN).contains(&packet_number_len) {
         return Err(Error::FrameEncoding);
     }
     for shift in (0..packet_number_len).rev() {
-        out.push(u8::try_from(packet_number >> (shift * 8) & 0xff)?);
+        out.push(u8::try_from((packet_number >> (shift * 8)) & 0xff)?);
     }
     Ok(())
 }
 
 fn decode_packet_number(expected: u64, truncated: u64, packet_number_len: usize) -> u64 {
+    debug_assert!((1..=PACKET_NUMBER_LEN).contains(&packet_number_len));
     let window = 1_u64 << (packet_number_len * 8);
+    let half_window = window / 2;
     let candidate = (expected & !(window - 1)) | truncated;
-    if candidate + (window / 2) <= expected {
-        candidate + window
-    } else if candidate > expected + (window / 2) {
+
+    if candidate
+        .checked_add(half_window)
+        .is_some_and(|threshold| threshold <= expected)
+    {
+        candidate.checked_add(window).unwrap_or(candidate)
+    } else if candidate > expected.saturating_add(half_window) {
         candidate.checked_sub(window).unwrap_or(candidate)
     } else {
         candidate
@@ -1100,6 +1168,7 @@ fn encode_channel_frame<B: Buffer>(enc: &mut Encoder<B>, frame: &ChannelFrame) -
             error_code,
             final_size,
         } => {
+            validate_channel_stream_id(*stream_id)?;
             enc.encode_varint(FrameType::ResetStream)
                 .encode_varint(*stream_id)
                 .encode_varint(*error_code)
@@ -1170,11 +1239,14 @@ fn decode_channel_frame(announce: &Announce, frame: QuicFrame) -> Res<ChannelFra
             stream_id,
             application_error_code,
             final_size,
-        } => ChannelFrame::ResetStream {
-            stream_id: stream_id.as_u64(),
-            error_code: application_error_code,
-            final_size,
-        },
+        } => {
+            validate_channel_stream_id(stream_id.as_u64())?;
+            ChannelFrame::ResetStream {
+                stream_id: stream_id.as_u64(),
+                error_code: application_error_code,
+                final_size,
+            }
+        }
         QuicFrame::Stream {
             stream_id,
             offset,
@@ -1215,7 +1287,7 @@ fn validate_channel_stream_id(stream_id: u64) -> Res<()> {
     }
 }
 
-fn validate_channel_control_frame(frame: &Frame) -> Res<()> {
+const fn validate_channel_control_frame(frame: &Frame) -> Res<()> {
     match frame {
         Frame::Key(_) | Frame::Leave(_) | Frame::Integrity(_) | Frame::Retire(_) => Ok(()),
         _ => Err(Error::FrameEncoding),
@@ -1248,7 +1320,7 @@ fn crypto_state_from_secret(
     )
 }
 
-fn cipher_from_id(id: u16) -> Res<Cipher> {
+const fn cipher_from_id(id: u16) -> Res<Cipher> {
     match id {
         0x1301 => Ok(TLS_AES_128_GCM_SHA256),
         0x1302 => Ok(TLS_AES_256_GCM_SHA384),
@@ -1362,7 +1434,7 @@ impl Frame {
                     reason_code: decode_varint(dec)?,
                     reason_phrase: decode_vvec(dec)?,
                 };
-                validate_state_reason(state.state, state.reason_code)?;
+                validate_state_reason(state.reason_scope, state.state, state.reason_code)?;
                 Self::State(state)
             }
             _ => return Err(Error::UnknownFrameType),
@@ -1442,7 +1514,7 @@ impl Frame {
                 enc.encode_varint(frame.after_packet_number);
             }
             Self::State(frame) => {
-                validate_state_reason(frame.state, frame.reason_code)?;
+                validate_state_reason(frame.reason_scope, frame.state, frame.reason_code)?;
                 encode_channel_id(enc, &frame.channel_id)?;
                 enc.encode_varint(frame.sequence)
                     .encode_byte(frame.state.into())
@@ -1483,7 +1555,7 @@ impl Frame {
     /// # Errors
     ///
     /// Returns an error if the frame cannot select a valid wire type.
-    pub fn frame_type(&self) -> Res<u64> {
+    pub const fn frame_type(&self) -> Res<u64> {
         Ok(match self {
             Self::Announce(frame) => match (&frame.source, &frame.group) {
                 (IpAddr::V4(_), IpAddr::V4(_)) => FRAME_TYPE_ANNOUNCE_V4,
@@ -1615,8 +1687,7 @@ impl AckTracker {
         {
             let gap = smallest_ack
                 .checked_sub(span.end)
-                .and_then(|delta| delta.checked_sub(2))
-                .expect("ack spans are ordered and disjoint");
+                .and_then(|delta| delta.checked_sub(2))?;
             ack_ranges.push(AckRange {
                 gap,
                 ack_range_length: span.end - span.start,
@@ -1635,7 +1706,7 @@ impl AckTracker {
     }
 
     /// Mark pending ACK state as sent.
-    pub fn mark_sent(&mut self) {
+    pub const fn mark_sent(&mut self) {
         self.pending = false;
     }
 }
@@ -1753,7 +1824,7 @@ enum IntegrityHashAlgorithm {
 }
 
 impl IntegrityHashAlgorithm {
-    fn from_id(id: u16) -> Res<Self> {
+    const fn from_id(id: u16) -> Res<Self> {
         match id {
             1 => Ok(Self::Sha256 { output_len: 32 }),
             2 => Ok(Self::Sha256 { output_len: 16 }),
@@ -1799,10 +1870,10 @@ pub fn integrity_hash_len_from_id(id: u16) -> Res<usize> {
 /// Return whether a draft encryption algorithm ID is supported.
 #[must_use]
 pub const fn encryption_algorithm_supported(id: u16) -> bool {
-    matches!(id, 0x1301 | 0x1302 | 0x1303)
+    matches!(id, 0x1301..=0x1303)
 }
 
-fn validate_encryption_algorithm(id: u16) -> Res<()> {
+const fn validate_encryption_algorithm(id: u16) -> Res<()> {
     if encryption_algorithm_supported(id) {
         Ok(())
     } else {
@@ -1828,7 +1899,7 @@ fn encode_channel_id<B: Buffer>(enc: &mut Encoder<B>, channel_id: &[u8]) -> Res<
     Ok(())
 }
 
-fn validate_channel_id(channel_id: &[u8]) -> Res<()> {
+const fn validate_channel_id(channel_id: &[u8]) -> Res<()> {
     if channel_id.is_empty() || channel_id.len() > ConnectionId::MAX_LEN {
         return Err(Error::FrameEncoding);
     }
@@ -1839,9 +1910,7 @@ fn decode_ip_addr(dec: &mut Decoder, frame_type: u64) -> Res<IpAddr> {
     match frame_type {
         FRAME_TYPE_ANNOUNCE_V4 => {
             let addr = dec.decode(4).ok_or(Error::NoMoreData)?;
-            Ok(IpAddr::V4(Ipv4Addr::new(
-                addr[0], addr[1], addr[2], addr[3],
-            )))
+            Ok(IpAddr::V4(Ipv4Addr::from(<[u8; 4]>::try_from(addr)?)))
         }
         FRAME_TYPE_ANNOUNCE_V6 => {
             let addr = dec.decode(16).ok_or(Error::NoMoreData)?;
@@ -1893,9 +1962,13 @@ fn encode_u16_list<B: Buffer>(enc: &mut Encoder<B>, values: &[u16]) {
     }
 }
 
-fn validate_state_reason(state: ChannelState, reason_code: u64) -> Res<()> {
-    match state {
-        ChannelState::Joined | ChannelState::Retired
+const fn validate_state_reason(
+    reason_scope: StateReasonScope,
+    state: ChannelState,
+    reason_code: u64,
+) -> Res<()> {
+    match (reason_scope, state) {
+        (StateReasonScope::Transport, ChannelState::Joined | ChannelState::Retired)
             if reason_code != STATE_REASON_REQUESTED_BY_SERVER =>
         {
             Err(Error::FrameEncoding)
@@ -1929,6 +2002,10 @@ mod tests {
 
     use super::*;
 
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "Tests construct frames inline and compare ownership round trips."
+    )]
     fn roundtrip(frame: Frame) {
         let encoded = frame.to_vec().expect("encode frame");
         let decoded = Frame::from_slice(&encoded).expect("decode frame");
@@ -1981,6 +2058,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Keeps the draft frame round-trip table in one place."
+    )]
     fn frame_roundtrips() {
         roundtrip(Frame::Announce(Announce {
             channel_id: channel_id(),
@@ -2153,6 +2234,28 @@ mod tests {
     }
 
     #[test]
+    fn packet_number_helpers_reject_invalid_lengths() {
+        let mut out = Vec::new();
+        assert_eq!(
+            encode_packet_number(0, 0, &mut out).unwrap_err(),
+            Error::FrameEncoding
+        );
+        assert_eq!(
+            encode_packet_number(0, PACKET_NUMBER_LEN + 1, &mut out).unwrap_err(),
+            Error::FrameEncoding
+        );
+    }
+
+    #[test]
+    fn packet_number_decode_handles_boundaries() {
+        assert_eq!(decode_packet_number(0xff, 0, 1), 0x100);
+        assert_eq!(
+            decode_packet_number(u64::MAX, 0, PACKET_NUMBER_LEN),
+            u64::MAX - u64::from(u32::MAX)
+        );
+    }
+
+    #[test]
     fn explicit_integrity_can_use_hash_len_to_leave_following_frame() {
         let frame = Frame::Integrity(Integrity {
             channel_id: channel_id(),
@@ -2192,6 +2295,19 @@ mod tests {
             reason_phrase: vec![],
         });
         assert_eq!(frame.to_vec().unwrap_err(), Error::FrameEncoding);
+    }
+
+    #[test]
+    fn application_state_uses_application_reason_namespace() {
+        let frame = Frame::State(State {
+            channel_id: channel_id(),
+            sequence: 1,
+            state: ChannelState::Joined,
+            reason_scope: StateReasonScope::Application,
+            reason_code: 99,
+            reason_phrase: b"application reason".to_vec(),
+        });
+        roundtrip(frame);
     }
 
     #[test]
@@ -2243,25 +2359,30 @@ mod tests {
             })
             .expect("insert integrity");
 
+        let packet = ChannelPacket {
+            channel_id: channel_id(),
+            packet_number: 10,
+            key_sequence: 7,
+            key_phase: false,
+            frames: vec![ChannelFrame::Datagram {
+                data: b"payload".to_vec(),
+            }],
+        };
         let released = state
-            .process_authenticated_packet(
-                ChannelPacket {
-                    channel_id: channel_id(),
-                    packet_number: 10,
-                    key_sequence: 7,
-                    key_phase: false,
-                    frames: vec![ChannelFrame::Datagram {
-                        data: b"payload".to_vec(),
-                    }],
-                },
-                protected_packet,
-            )
+            .process_authenticated_packet(packet.clone(), protected_packet)
             .expect("process packet");
 
         assert_eq!(released.len(), 1);
         assert_eq!(released[0].data, b"payload");
         assert!(state.pending_ack().is_some());
         assert_eq!(state.pop_datagram(), released.into_iter().next());
+        assert!(
+            state
+                .process_authenticated_packet(packet, protected_packet)
+                .expect("duplicate packet is ignored")
+                .is_empty()
+        );
+        assert!(state.pop_datagram().is_none());
     }
 
     #[test]

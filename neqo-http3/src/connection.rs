@@ -50,6 +50,10 @@ use crate::{
     stream_type_reader::NewStreamHeadReader,
 };
 
+/// Maximum unmatched HTTP/3 DATAGRAM payloads retained for Firefox MCQUIC glue.
+///
+/// This queue is a bounded bridge for native prototype plumbing, not an
+/// application-visible delivery path.
 #[cfg(feature = "mcquic")]
 const MAX_MCQUIC_RAW_DATAGRAMS: usize = 64;
 
@@ -339,7 +343,7 @@ impl Http3Connection {
             send_streams: HashMap::default(),
             recv_streams: HashMap::default(),
             #[cfg(feature = "mcquic")]
-            mcquic_raw_datagrams: VecDeque::default(),
+            mcquic_raw_datagrams: VecDeque::with_capacity(MAX_MCQUIC_RAW_DATAGRAMS),
             role,
         }
     }
@@ -663,6 +667,8 @@ impl Http3Connection {
             // TODO: investigate whether this code can automatically retry failed transactions.
             self.send_streams.clear();
             self.recv_streams.clear();
+            #[cfg(feature = "mcquic")]
+            self.mcquic_raw_datagrams.clear();
             Ok(())
         } else {
             debug_assert!(false, "Zero rtt rejected in the wrong state");
@@ -696,14 +702,20 @@ impl Http3Connection {
             .datagram(Bytes::new(datagram, varint_len));
     }
 
+    /// Store an unmatched HTTP/3 DATAGRAM for native MCQUIC prototype glue.
+    ///
+    /// When the bounded queue is full, the oldest payload is dropped so this
+    /// fallback path cannot grow unbounded under a stream of non-WebTransport
+    /// DATAGRAMs.
     #[cfg(feature = "mcquic")]
     fn store_mcquic_raw_datagram(&mut self, datagram: Vec<u8>) {
-        if self.mcquic_raw_datagrams.len() == MAX_MCQUIC_RAW_DATAGRAMS {
-            let _ = self.mcquic_raw_datagrams.pop_front();
+        if self.mcquic_raw_datagrams.len() >= MAX_MCQUIC_RAW_DATAGRAMS {
+            drop(self.mcquic_raw_datagrams.pop_front());
         }
         self.mcquic_raw_datagrams.push_back(datagram);
     }
 
+    /// Pop the oldest unmatched HTTP/3 DATAGRAM retained for MCQUIC glue.
     #[cfg(feature = "mcquic")]
     #[cfg_attr(
         not(test),
@@ -1915,6 +1927,8 @@ mod tests {
 
     #[cfg(feature = "mcquic")]
     use crate::Http3Parameters;
+    #[cfg(feature = "mcquic")]
+    use crate::connection::Http3State;
     use crate::{
         Error, Priority,
         connection::{Http3Connection, RequestDescription},
@@ -1930,6 +1944,20 @@ mod tests {
         conn.handle_datagram(datagram.clone());
 
         assert_eq!(conn.pop_mcquic_raw_datagram(), Some(datagram));
+        assert_eq!(conn.pop_mcquic_raw_datagram(), None);
+    }
+
+    #[test]
+    #[cfg(feature = "mcquic")]
+    fn mcquic_raw_datagram_queue_cleared_after_zero_rtt_rejected() {
+        let mut conn = Http3Connection::new(Http3Parameters::default(), Role::Client);
+        let datagram = vec![0x0a, 0x09, 0x01, 0x01, b'Q', b'V', b'F', b'1'];
+        conn.state = Http3State::ZeroRtt;
+
+        conn.handle_datagram(datagram);
+        conn.handle_zero_rtt_rejected()
+            .expect("0-RTT rejection resets HTTP/3 state");
+
         assert_eq!(conn.pop_mcquic_raw_datagram(), None);
     }
 

@@ -361,7 +361,7 @@ impl NewTokenState {
         }
     }
 
-    /// If this a server, buffer a `NEW_TOKEN` for sending.
+    /// If this is a server, buffer a `NEW_TOKEN` for sending.
     /// If this is a client, panic.
     pub fn send_new_token(&mut self, token: Vec<u8>) {
         if let Self::Server(sender) = self {
@@ -371,7 +371,7 @@ impl NewTokenState {
         }
     }
 
-    /// If this a server, process a lost signal for a `NEW_TOKEN` frame.
+    /// If this is a server, process a lost signal for a `NEW_TOKEN` frame.
     /// If this is a client, panic.
     pub fn lost(&mut self, seqno: usize) {
         if let Self::Server(sender) = self {
@@ -381,7 +381,7 @@ impl NewTokenState {
         }
     }
 
-    /// If this a server, process remove the acknowledged `NEW_TOKEN` frame.
+    /// If this is a server, process the acknowledged `NEW_TOKEN` frame.
     /// If this is a client, panic.
     pub fn acked(&mut self, seqno: usize) {
         if let Self::Server(sender) = self {

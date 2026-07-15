@@ -14,7 +14,7 @@ use crate::{Error, Res, huffman, prefix::Prefix};
 pub trait ReadByte {
     /// # Errors
     ///
-    /// Return error occurred while reading a byte.
+    /// Return an error that occurred while reading a byte.
     /// The exact error depends on trait implementation.
     fn read_byte(&mut self) -> Res<u8>;
 }
@@ -22,7 +22,7 @@ pub trait ReadByte {
 pub trait Reader {
     /// # Errors
     ///
-    /// Return error occurred while reading date into a buffer.
+    /// Return an error that occurred while reading data into a buffer.
     /// The exact error depends on trait implementation.
     fn read(&mut self, buf: &mut [u8]) -> Res<usize>;
 }
@@ -150,7 +150,7 @@ impl<'a> ReceiverBufferWrapper<'a> {
     }
 }
 
-/// This is varint reader that can take into account a prefix.
+/// This is a varint reader that can take into account a prefix.
 #[derive(Debug)]
 #[expect(clippy::module_name_repetitions, reason = "This is OK.")]
 pub struct IntReader {

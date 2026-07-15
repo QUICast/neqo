@@ -41,13 +41,11 @@ fi
 
 if [[ "${MCQUIC_USE_LOCAL_NSS_RS:-0}" == "1" && -n "${nss_rs_path}" && -f "${nss_rs_path}/Cargo.toml" ]]; then
     nss_dependency="nss = { path = \"${nss_rs_path}\", package = \"nss-rs\" }"
-    nss_test_fixture_dependency="nss-test-fixture = { path = \"${nss_rs_path}/test-fixture\", package = \"test-fixture\" }"
     nss_patch="[patch.\"git+https://github.com/mozilla/nss-rs?rev=0.12.2\"]
 nss = { path = \"${nss_rs_path}\", package = \"nss-rs\" }
 nss-test-fixture = { path = \"${nss_rs_path}/test-fixture\", package = \"test-fixture\" }"
 else
     nss_dependency="nss = { rev = \"0.12.2\", package = \"nss-rs\", git = \"https://github.com/mozilla/nss-rs\" }"
-    nss_test_fixture_dependency="nss-test-fixture = { rev = \"0.12.2\", package = \"test-fixture\", git = \"https://github.com/mozilla/nss-rs\" }"
     nss_patch=""
 fi
 

@@ -47,12 +47,15 @@ impl FrameDecoder<Self> for WebTransportFrame {
     const FUZZING_CORPUS: Option<&'static str> = Some("wtframe");
 
     fn decode(frame_type: HFrameType, frame_len: u64, data: Option<&[u8]>) -> Res<Option<Self>> {
+        if frame_type == HFrameType(Self::CLOSE_SESSION)
+            && frame_len > Self::CLOSE_MAX_MESSAGE_SIZE + 4
+        {
+            return Err(Error::HttpMessage);
+        }
+
         if let Some(payload) = data {
             let mut dec = Decoder::from(payload);
             if frame_type == HFrameType(Self::CLOSE_SESSION) {
-                if frame_len > Self::CLOSE_MAX_MESSAGE_SIZE + 4 {
-                    return Err(Error::HttpMessage);
-                }
                 let error = dec.decode_uint().ok_or(Error::HttpMessage)?;
                 let Ok(message) = String::from_utf8(dec.decode_remainder().to_vec()) else {
                     return Err(Error::HttpMessage);
@@ -102,6 +105,16 @@ mod tests {
             HFrameType(WebTransportFrame::CLOSE_SESSION),
             frame_len,
             Some(&payload),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decode_close_session_too_large_without_payload() {
+        let result = WebTransportFrame::decode(
+            HFrameType(WebTransportFrame::CLOSE_SESSION),
+            WebTransportFrame::CLOSE_MAX_MESSAGE_SIZE + 5,
+            None,
         );
         assert!(result.is_err());
     }

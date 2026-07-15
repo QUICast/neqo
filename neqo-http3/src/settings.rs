@@ -140,7 +140,7 @@ impl HSettings {
 
     /// # Errors
     ///
-    /// Returns an error if settings types are reserved of settings value are not permitted.
+    /// Returns an error if settings types are reserved or setting values are not permitted.
     pub fn decode_frame_contents(&mut self, dec: &mut Decoder) -> Res<()> {
         #[cfg(feature = "build-fuzzing-corpus")]
         neqo_common::write_item_to_fuzzing_corpus("hsettings", dec.as_ref());
@@ -171,31 +171,8 @@ impl HSettings {
                     self.settings
                         .push(HSetting::new(HSettingType::EnableWebTransport, value));
                 }
-                (Some(SETTINGS_H3_DATAGRAM_DRAFT04), Some(value)) => {
-                    if value > 1 {
-                        return Err(Error::HttpSettings);
-                    }
-                    if !self
-                        .settings
-                        .iter()
-                        .any(|s| s.setting_type == HSettingType::EnableH3Datagram)
-                    {
-                        self.settings
-                            .push(HSetting::new(HSettingType::EnableH3Datagram, value));
-                    }
-                }
-                (Some(SETTINGS_H3_DATAGRAM), Some(value)) => {
-                    if value > 1 {
-                        return Err(Error::HttpSettings);
-                    }
-                    if !self
-                        .settings
-                        .iter()
-                        .any(|s| s.setting_type == HSettingType::EnableH3Datagram)
-                    {
-                        self.settings
-                            .push(HSetting::new(HSettingType::EnableH3Datagram, value));
-                    }
+                (Some(SETTINGS_H3_DATAGRAM_DRAFT04 | SETTINGS_H3_DATAGRAM), Some(value)) => {
+                    self.set_h3_datagram_if_absent(value)?;
                 }
                 (Some(SETTINGS_ENABLE_CONNECT_PROTOCOL), Some(value)) => {
                     if value > 1 {
@@ -209,6 +186,21 @@ impl HSettings {
                 }
                 _ => return Err(Error::NotEnoughData),
             }
+        }
+        Ok(())
+    }
+
+    fn set_h3_datagram_if_absent(&mut self, value: u64) -> Res<()> {
+        if value > 1 {
+            return Err(Error::HttpSettings);
+        }
+        if !self
+            .settings
+            .iter()
+            .any(|s| s.setting_type == HSettingType::EnableH3Datagram)
+        {
+            self.settings
+                .push(HSetting::new(HSettingType::EnableH3Datagram, value));
         }
         Ok(())
     }
